@@ -52,9 +52,13 @@ export function resolveVoiceHints(args: ResolveVoiceHintsArgs): VoiceHintPhase |
     const descending = vs < -300
     const perfTA = usePerformanceStore.getState().takeoff.transitionAltitude || 5000
     const perfTL = usePerformanceStore.getState().landing.transitionLevel || 5000
-    const hasAtCl = lastCl === "after_takeoff_to_the_line" || lastCl === "after_takeoff_below_the_line"
 
-    if (!descending) {
+    const inDescentContext =
+      descending ||
+      lastFl?.startsWith("desc_") ||
+      lastCl?.startsWith("des_")
+
+    if (!inDescentContext) {
       if (flapsIndex > 0)
         return {
           id: "initial_climb",
@@ -62,26 +66,44 @@ export function resolveVoiceHints(args: ResolveVoiceHintsArgs): VoiceHintPhase |
           phrases: ["gear up", "flaps up", "slats retract", "autoflight"]
         }
 
-      if (!hasAtCl) {
-        if (alt > perfTA)
-          return {
-            id: "after_takeoff_below_the_line",
-            title: "After takeoff",
-            phrases: ["after takeoff checklist below the line", "seatbelts auto"]
-          }
+      const aboveTA = alt > perfTA
+      const above10k = alt > 10000
+
+      // Past transition altitude -> do the below the line checklist
+      if (aboveTA) {
+        const phrases = ["after takeoff checklist below the line"]
+        if (above10k) phrases.push("seatbelts auto")
+        return { id: "after_takeoff_below_the_line", title: "After takeoff", phrases }
+      }
+
+      // Still below TA, flaps up -> do to the line
+      if (lastFl === "after_takeoff") {
         return { id: "after_takeoff_to_line", title: "After takeoff", phrases: ["after takeoff checklist to the line"] }
       }
 
-      if (lastFl === "climb_ten_thousand_flow") {
-        return { id: "climb_cruise", title: "Climb / cruise", phrases: ["seatbelts auto" ,"you have control", "i have control"] }
+      // Cruise gate
+      if (aboveTA && above10k && (lastFl === "climb_ten_thousand_flow" || lastCl === "after_takeoff_below_the_line")) {
+        return {
+          id: "climb_cruise",
+          title: "Climb / cruise",
+          phrases: ["seatbelts auto", "you have control", "i have control"]
+        }
       }
-    } else {
+    } 
+    else {
       if (alt > perfTL)
         return {
           id: "descent_high",
           title: "Descent / Approach",
           phrases: ["descent approach checklist through seat belts"]
         }
+
+      // Below 10k approach - priority for config
+      if (alt < 10000 && landingGear !== 25) {
+        const phrases = ["slats extend", "flaps X", "gear down"]
+        if (lastCl !== "des_P2") phrases.unshift("complete descent approach checklist")
+        return { id: "approach_low", title: "Approach", phrases }
+      }
 
       if (alt <= perfTL && lastCl !== "des_P2" && lastFl !== "desc_ten_thousand_flow") {
         return { id: "descent_low", title: "Approach", phrases: ["complete descent approach checklist"] }
